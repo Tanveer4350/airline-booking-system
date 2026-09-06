@@ -175,17 +175,22 @@ console.log(data);
   };
   const seatLetters = [
     ...new Set(
-        seats.map((seat) =>
-            normalizeSeat(seat.seat_number).match(/[A-Z]+/)[0]
-        )
+      seats
+        .map((seat) => {
+          const norm = normalizeSeat(seat?.seat_number);
+          const match = norm ? norm.match(/[A-Z]+/) : null;
+          return match ? match[0] : null;
+        })
+        .filter(Boolean)
     ),
-].sort();
+  ].sort();
 
-const mid = Math.ceil(seatLetters.length / 2);
+  const mid = Math.ceil(seatLetters.length / 2);
 
-const leftSeats = seatLetters.slice(0, mid);
+  const leftSeats = seatLetters.slice(0, mid);
 
-const rightSeats = seatLetters.slice(mid);
+  const rightSeats = seatLetters.slice(mid);
+
 
   
   return (
