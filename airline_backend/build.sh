@@ -15,4 +15,4 @@ pip install -r requirements.txt
 python manage.py collectstatic --no-input
 python manage.py migrate
 python manage.py create_initial_superuser
-python manage.py seed_data --days 7
+python manage.py seed_data --days 30 --clear
