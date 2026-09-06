@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: airline-system
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: "cd airline_backend && gunicorn airline_backend.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: NODE_VERSION
+        value: 20
+      - key: DEBUG
+        value: False
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: airline-db
+          property: connectionString
+
+databases:
+  - name: airline-db
+    databaseName: airline_db
+    user: postgres
+    plan: free
