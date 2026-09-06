@@ -1,123 +1,427 @@
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.http import JsonResponse
-from .models import Flight
-from rest_framework.decorators import api_view
-from datetime import datetime
-from .models import Route, Flight, Seat, User, Booking
+from django.shortcuts import get_object_or_404
+from decimal import Decimal
+
+from .models import (
+    Aircraft,
+    Route,
+    Flight,
+    Seat,
+    User,
+    Booking,
+)
+
 from .serializers import (
-    RouteSerializer, FlightSerializer, SeatSerializer,
-    UserSerializer, BookingSerializer
+    AircraftSerializer,
+    RouteSerializer,
+    FlightSerializer,
+    SeatSerializer,
+    UserSerializer,
+    BookingSerializer,
 )
 
 
-# ------------------ Search Flights ---------------------
-@api_view(['GET'])
+# ==========================================================
+# SEARCH FLIGHTS
+# ==========================================================
 
-
+@api_view(["GET"])
 def search_flights(request):
-    from_city = request.GET.get('from')
-    to_city = request.GET.get('to')
-    date = request.GET.get('date')
+
+    from_city = request.GET.get("from")
+    to_city = request.GET.get("to")
+    date = request.GET.get("date")
+
+    if not from_city or not to_city or not date:
+        return Response(
+            {"error": "Missing search parameters"},
+            status=400
+        )
 
     flights = Flight.objects.filter(
         route__source_airport__iexact=from_city,
         route__destination_airport__iexact=to_city,
         departure_datetime__date=date
+    ).select_related(
+        "route",
+        "aircraft"
     )
 
     data = []
-    for f in flights:
+
+    for flight in flights:
+
+        available = Seat.objects.filter(
+            flight=flight,
+            is_booked=False
+        ).count()
+
+        total = flight.aircraft.total_seats
+
+        booked = total - available
+
+        seat_factor = Decimal(booked) / Decimal(total)
+
+        dynamic_price = (
+            flight.base_price +
+            (flight.base_price * seat_factor * Decimal("0.50"))
+        )
+
         data.append({
-            "id": f.id,
-            "from": f.route.source_airport,
-            "to": f.route.destination_airport,
-            "departure": str(f.departure_datetime),
-            "price": float(f.base_price)
+
+            "id": flight.id,
+
+            "flight_name": f"Flight {flight.id}",
+
+            "from": flight.route.source_airport,
+
+            "to": flight.route.destination_airport,
+
+            "departure_time": flight.departure_datetime,
+
+            "arrival_time": flight.arrival_datetime,
+
+            "price": float(dynamic_price),
+
+            "status": flight.status,
+
+            "available_seats": available,
+
+            "aircraft": flight.aircraft.model_name,
+
         })
 
-    return JsonResponse(data, safe=False)
+    return Response(data)
 
 
-# ------------------ Seat Map ---------------------------
-@api_view(['GET'])
+# ==========================================================
+# SEAT MAP
+# ==========================================================
+
+@api_view(["GET"])
 def seat_map(request, flight_id):
-    seats = Seat.objects.filter(flight_id=flight_id)
-    serializer = SeatSerializer(seats, many=True)
-    return Response(serializer.data)
 
+    flight = get_object_or_404(
+        Flight,
+        id=flight_id
+    )
 
-# ------------------ User Register ----------------------
-# views.py
+    seats = Seat.objects.filter(
+        flight=flight
+    ).order_by("seat_number")
 
-
-import random
-
-@api_view(['POST'])
-def create_booking(request):
-    flight_id = request.data.get("flight_id")
-    seat_id = request.data.get("seat_id")
-
-    flight = Flights.objects.get(id=flight_id)
-    seat = Seats.objects.get(id=seat_id)
-
-    if seat.is_booked:
-        return Response({"error": "Seat already booked"}, status=400)
-
-    # mark seat booked
-    seat.is_booked = True
-    seat.save()
-
-    booking = Booking.objects.create(
-        flight=flight,
-        seat=seat,
-        price=flight.price,
-        pnr="PNR" + str(random.randint(100000, 999999))
+    serializer = SeatSerializer(
+        seats,
+        many=True
     )
 
     return Response({
-        "pnr": booking.pnr,
-        "flight": f"{flight.from_city} → {flight.to_city}",
-        "seat": seat.seat_number,
-        "price": booking.price,
-        "flight_name": flight.flight_name,
-        "departure": flight.departure_time,
-        "arrival": flight.arrival_time
+
+        "rows": flight.aircraft.rows,
+
+        "cols": flight.aircraft.cols,
+
+        "aircraft": flight.aircraft.model_name,
+
+        "seats": serializer.data
+
     })
+# ==========================================================
+# REGISTER USER
+# ==========================================================
+
+@api_view(["POST"])
+def register_user(request):
+
+    serializer = UserSerializer(
+        data=request.data
+    )
+
+    if serializer.is_valid():
+        serializer.save()
+
+        return Response(
+            {
+                "message": "Registration Successful",
+                "user": serializer.data
+            }
+        )
+
+    return Response(
+        serializer.errors,
+        status=400
+    )
 
 
-# ------------------ User Login -------------------------
-@api_view(['POST'])
+# ==========================================================
+# LOGIN USER
+# ==========================================================
+
+@api_view(["POST"])
 def login_user(request):
+
     email = request.data.get("email")
+
     password = request.data.get("password")
 
     try:
-        user = User.objects.get(email=email, password=password)
-        return Response({"message": "Login successful", "user_id": user.id})
+
+        user = User.objects.get(
+            email=email,
+            password=password
+        )
+
+        return Response({
+
+            "message": "Login Successful",
+
+            "user_id": user.id,
+
+            "name": user.name,
+
+            "email": user.email
+
+        })
+
     except User.DoesNotExist:
-        return Response({"error": "Invalid credentials"}, status=400)
 
+        return Response(
 
-# ------------------ Book Seat --------------------------
-@api_view(['POST'])
+            {
+
+                "error": "Invalid Email or Password"
+
+            },
+
+            status=400
+
+        )
+        
+        # ==========================================================
+# BOOK SEAT
+# ==========================================================
+
+@api_view(["POST"])
 def book_seat(request):
+
     user_id = request.data.get("user_id")
     flight_id = request.data.get("flight_id")
     seat_id = request.data.get("seat_id")
 
-    seat = Seat.objects.get(id=seat_id)
+    if not flight_id or not seat_id:
+        return Response(
+            {"error": "Flight ID and Seat ID are required"},
+            status=400
+        )
+
+    flight = get_object_or_404(
+        Flight,
+        id=flight_id
+    )
+
+    seat = get_object_or_404(
+        Seat,
+        id=seat_id,
+        flight=flight
+    )
+
     if seat.is_booked:
-        return Response({"error": "Seat already booked"}, status=400)
+        return Response(
+            {"error": "Seat already booked"},
+            status=400
+        )
 
     seat.is_booked = True
     seat.save()
 
+    user = None
+
+    if user_id:
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            user = None
+
     booking = Booking.objects.create(
-        user_id=user_id,
-        flight_id=flight_id,
-        seat_id=seat_id,
-        price_paid=1000  # dynamic price will be added later
+
+        user=user,
+
+        flight=flight,
+
+        seat=seat,
+
+        price_paid=flight.base_price,
+
+        payment_status="Paid"
+
     )
 
-    return Response({"message": "Seat booked", "booking_id": booking.id})
+    return Response({
 
+        "success": True,
+
+        "booking_id": booking.id,
+
+        "pnr": booking.pnr,
+
+        "flight_id": flight.id,
+
+        "flight_name": f"Flight {flight.id}",
+
+        "from": flight.route.source_airport,
+
+        "to": flight.route.destination_airport,
+
+        "departure": flight.departure_datetime,
+
+        "arrival": flight.arrival_datetime,
+
+        "seat": seat.seat_number,
+
+        "price": float(booking.price_paid),
+
+        "status": booking.payment_status
+
+    })
+
+
+# ==========================================================
+# GET BOOKINGS
+# ==========================================================
+
+@api_view(["GET"])
+def get_bookings(request):
+    pnr_query = request.GET.get("pnr", "").strip()
+    limit = int(request.GET.get("limit", 50))
+
+    bookings_qs = Booking.objects.select_related(
+        "flight",
+        "flight__route",
+        "flight__aircraft",
+        "seat",
+        "user"
+    ).order_by("-booking_time")
+
+    if pnr_query:
+        bookings_qs = bookings_qs.filter(pnr__icontains=pnr_query)
+
+    bookings = bookings_qs[:limit]
+
+    data = []
+
+    for booking in bookings:
+
+        flight = booking.flight
+
+        data.append({
+
+            "id": booking.id,
+
+            "pnr": booking.pnr,
+
+            "flight_id": flight.id,
+
+            "flight_name": flight.flight_number or f"Flight {flight.id}",
+
+            "from": flight.route.source_airport,
+
+            "to": flight.route.destination_airport,
+
+            "departure": flight.departure_datetime,
+
+            "arrival": flight.arrival_datetime,
+
+            "aircraft": flight.aircraft.model_name,
+
+            "seat": booking.seat.seat_number,
+
+            "seat_class": booking.seat.seat_class,
+
+            "price": float(booking.price_paid),
+
+            "status": booking.payment_status,
+
+            "booking_time": booking.booking_time,
+
+            "passenger": booking.user.name if booking.user else "Guest"
+
+        })
+
+    return Response(data)
+
+
+# ==========================================================
+# GET SINGLE BOOKING
+# ==========================================================
+
+@api_view(["GET"])
+def get_booking(request, booking_id):
+
+    booking = get_object_or_404(
+        Booking,
+        id=booking_id
+    )
+
+    flight = booking.flight
+
+    return Response({
+
+        "id": booking.id,
+
+        "pnr": booking.pnr,
+
+        "flight_name": flight.flight_number,
+
+        "passenger": booking.user.name if booking.user else "Guest",
+
+        "from": flight.route.source_airport,
+
+        "to": flight.route.destination_airport,
+
+        "departure": flight.departure_datetime,
+
+        "arrival": flight.arrival_datetime,
+
+        "aircraft": flight.aircraft.model_name,
+
+        "seat": booking.seat.seat_number,
+
+        "seat_class": booking.seat.seat_class,
+
+        "price": float(booking.price_paid),
+
+        "status": booking.payment_status,
+
+        "booking_time": booking.booking_time
+
+    })
+
+
+# ==========================================================
+# CANCEL BOOKING
+# ==========================================================
+
+@api_view(["DELETE"])
+def cancel_booking(request, booking_id):
+
+    booking = get_object_or_404(
+        Booking,
+        id=booking_id
+    )
+
+    seat = booking.seat
+
+    seat.is_booked = False
+    seat.save()
+
+    booking.delete()
+
+    return Response({
+
+        "success": True,
+
+        "message": "Booking cancelled successfully"
+
+    })

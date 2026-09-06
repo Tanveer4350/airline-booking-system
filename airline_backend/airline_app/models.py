@@ -21,15 +21,23 @@ class Route(models.Model):
 
 
 class Flight(models.Model):
+    flight_number = models.CharField(
+    max_length=20,
+    unique=True
+)
+
     route = models.ForeignKey(Route, on_delete=models.CASCADE)
     aircraft = models.ForeignKey(Aircraft, on_delete=models.CASCADE)
+
     departure_datetime = models.DateTimeField()
     arrival_datetime = models.DateTimeField()
+
     base_price = models.DecimalField(max_digits=10, decimal_places=2)
+
     status = models.CharField(max_length=20, default="Scheduled")
 
     def __str__(self):
-        return f"Flight {self.id}"
+        return self.flight_number
 
 
 class Seat(models.Model):
@@ -58,7 +66,11 @@ class Booking(models.Model):
     flight = models.ForeignKey(Flight, on_delete=models.CASCADE)
     seat = models.ForeignKey(Seat, on_delete=models.CASCADE)
 
-    pnr = models.CharField(max_length=20, unique=True, editable=False)
+    pnr = models.CharField(
+    max_length=20,
+    unique=True,
+    editable=False
+)
 
     price_paid = models.DecimalField(max_digits=10, decimal_places=2)
     booking_time = models.DateTimeField(auto_now_add=True)
@@ -81,12 +93,13 @@ def create_seats_for_flight(sender, instance, created, **kwargs):
         rows = instance.aircraft.rows
         cols = instance.aircraft.cols
 
-        for r in range(1, rows + 1):
-            for c in range(1, cols + 1):
-                seat_no = f"{chr(64 + r)}{c}"
+        letters = [chr(65 + i) for i in range(cols)]  # A, B, C, ...
+
+        for row in range(1, rows + 1):
+            for letter in letters:
                 Seat.objects.create(
                     flight=instance,
-                    seat_number=seat_no,
+                    seat_number=f"{letter}{row}",
                     seat_class="Economy",
-                    is_booked=False
+                    is_booked=False,
                 )
